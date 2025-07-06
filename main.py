@@ -15,7 +15,13 @@ from aiogram.dispatcher.filters import Command
 
 
 # Загрузка токена бота из переменной окружения или впиши сюда
-BOT_TOKEN = '7811348597:AAFNzegE0X88JGz_1t4Kid5zBRUJuFVYOKM'
+import os
+
+BOT_TOKEN = os.getenv('BOT_TOKEN')
+if not BOT_TOKEN:
+    raise ValueError("Не найден токен бота в переменной окружения BOT_TOKEN")
+
+bot = Bot(token=BOT_TOKEN)
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
