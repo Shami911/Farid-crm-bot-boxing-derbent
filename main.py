@@ -7,25 +7,24 @@ from aiogram.utils import executor
 from aiogram.dispatcher import FSMContext
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.dispatcher.filters import Command
+from aiogram.dispatcher.filters.state import State, StatesGroup
 
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from aiogram.dispatcher.filters import Command
 
-
-
-# Загрузка токена бота из переменной окружения или впиши сюда
-BOT_TOKEN = '7811348597:AAFNzegE0X88JGz_1t4Kid5zBRUJuFVYOKM'
-
-# Настройка логирования
+# --- Настройка логирования ---
 logging.basicConfig(level=logging.INFO)
 
-# Инициализация бота и диспетчера
+# --- Токен бота ---
+BOT_TOKEN = '7750147455:AAH5kY4fUeJ8Rqwrcyl3reTBG0jjK1SBRNg'
+
+# --- Инициализация бота и диспетчера ---
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
-# Создаем клавиатуру с кнопками
+# --- Клавиатура главного меню ---
 main_menu_kb = ReplyKeyboardMarkup(resize_keyboard=True)
 main_menu_kb.add(
     KeyboardButton("➕ Добавить"),
@@ -34,20 +33,25 @@ main_menu_kb.add(
     KeyboardButton("💰 Прибыль")
 )
 
-# Настройка доступа к Google Sheets
+# --- Подключение к Google Sheets ---
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds = ServiceAccountCredentials.from_json_keyfile_name('credentials.json', scope)
 client = gspread.authorize(creds)
-
-# Открываем таблицу по названию (укажи название твоей таблицы)
 SPREADSHEET_NAME = 'Школа бокса Фарид'
-sheet = client.open(SPREADSHEET_NAME).sheet1  # Используем первый лист
+sheet = client.open(SPREADSHEET_NAME).sheet1
 
-# Команда /start
+# --- Асинхронные обертки для работы с таблицей ---
+async def get_all_records_async():
+    return await asyncio.to_thread(sheet.get_all_records)
+
+async def append_row_async(row):
+    await asyncio.to_thread(sheet.append_row, row)
+
+# --- Команда /start ---
 @dp.message_handler(commands=['start'])
 async def send_welcome(message: types.Message):
     await message.answer(
-        "Привет! Я CRM-бот для школы бокса.\n"
+        "Привет! Я CRM-бот для школы бокса Локально111.\n"
         "Используй команды:\n"
         "/add_student - добавить ученика\n"
         "/list_students - список учеников\n"
@@ -55,43 +59,47 @@ async def send_welcome(message: types.Message):
         reply_markup=main_menu_kb
     )
 
-# Команда /list_students - выводит список учеников и дней осталось
+# --- Список учеников ---
 @dp.message_handler(commands=['list_students'])
 @dp.message_handler(text="📋 Посмотреть список")
 async def list_students(message: types.Message):
-    records = sheet.get_all_records()
+    records = await get_all_records_async()
     response = "Ученики и дни осталось:\n"
     for rec in records:
         response += f"{rec['ФИО']} - {rec['Дней осталось']} дней\n"
     await message.answer(response)
 
-# Команда /check - уведомляет, кто заканчивается через 3 дня
+# --- Проверка абонементов, заканчивающихся скоро ---
 @dp.message_handler(commands=['check'])
 @dp.message_handler(text="⏰ Проверить сроки")
 async def check_expiring(message: types.Message):
-    records = sheet.get_all_records()
+    records = await get_all_records_async()
     today = datetime.now().date()
     notify_list = []
     for rec in records:
-        end_date = datetime.strptime(rec['Дата окончания'], "%d.%m.%Y").date()
-        days_left = (end_date - today).days
+        try:
+            end_date = datetime.strptime(rec['Дата окончания'], "%d.%m.%Y").date()
+            days_left = (end_date - today).days
+        except Exception as e:
+            logging.warning(f"Ошибка парсинга даты у {rec.get('ФИО', 'неизвестно')}: {e}")
+            continue
+
         if 0 <= days_left <= 3:
             notify_list.append(f"{rec['ФИО']} - заканчивается через {days_left} дней")
-            # Отправляем уведомление ученику (если есть Telegram ID)
-            if rec['Telegram ID']:
+            if rec.get('Telegram ID'):
                 try:
                     await bot.send_message(rec['Telegram ID'], f"Ваш абонемент заканчивается через {days_left} дней.")
                 except Exception as e:
-                    print(f"Не удалось отправить сообщение {rec['ФИО']}: {e}")
+                    logging.warning(f"Не удалось отправить сообщение {rec['ФИО']}: {e}")
     if notify_list:
         await message.answer("Скоро заканчиваются абонементы:\n" + "\n".join(notify_list))
     else:
         await message.answer("Нет абонементов, которые заканчиваются в ближайшие 3 дня.")
 
-
+# --- Прибыль ---
 @dp.message_handler(text="💰 Прибыль")
 async def show_profit(message: types.Message):
-    records = sheet.get_all_records()
+    records = await get_all_records_async()
     today = datetime.today().date()
     week_ago = today - timedelta(days=7)
     month_ago = today - timedelta(days=30)
@@ -101,11 +109,9 @@ async def show_profit(message: types.Message):
     month_total = 0
 
     for rec in records:
-        print(rec)
         try:
             start_date = datetime.strptime(rec['Дата начала'], "%d.%m.%Y").date()
-            payment = int(rec['Сумма оплаты (в рублях)'])  # меняй на нужное имя столбца, если отличается
-
+            payment = int(rec['Сумма оплаты (в рублях)'])
             if start_date == today:
                 day_total += payment
             if week_ago <= start_date <= today:
@@ -113,7 +119,7 @@ async def show_profit(message: types.Message):
             if month_ago <= start_date <= today:
                 month_total += payment
         except Exception as e:
-            print(f"Ошибка при обработке записи: {e}")
+            logging.warning(f"Ошибка при обработке записи: {e}")
             continue
 
     await message.answer(
@@ -124,12 +130,7 @@ async def show_profit(message: types.Message):
         parse_mode="Markdown"
     )
 
-
-
-from aiogram.dispatcher import FSMContext
-from aiogram.dispatcher.filters.state import State, StatesGroup
-from datetime import datetime
-
+# --- FSM для добавления ученика ---
 class AddStudentState(StatesGroup):
     fio = State()
     phone = State()
@@ -184,31 +185,39 @@ async def process_abon(message: types.Message, state: FSMContext):
 
 @dp.message_handler(state=AddStudentState.start_date)
 async def process_start(message: types.Message, state: FSMContext):
+    # Проверяем формат даты
+    try:
+        datetime.strptime(message.text, "%d.%m.%Y")
+    except ValueError:
+        await message.reply("Неверный формат даты. Введите дату начала в формате ДД.ММ.ГГГГ:")
+        return
     await state.update_data(start_date=message.text)
     await AddStudentState.end_date.set()
     await message.reply("Введите дату окончания (ДД.ММ.ГГГГ):")
 
 @dp.message_handler(state=AddStudentState.end_date)
 async def process_end(message: types.Message, state: FSMContext):
+    # Проверяем формат даты
+    try:
+        datetime.strptime(message.text, "%d.%m.%Y")
+    except ValueError:
+        await message.reply("Неверный формат даты. Введите дату окончания в формате ДД.ММ.ГГГГ:")
+        return
     await state.update_data(end_date=message.text)
     await AddStudentState.payment.set()
     await message.reply("Введите сумму оплаты (в рублях):")
-    
-
-
 
 @dp.message_handler(state=AddStudentState.payment)
 async def process_payment(message: types.Message, state: FSMContext):
     user_data = await state.get_data()
     payment = message.text
     try:
-        # Парсим даты и считаем разницу
         start = datetime.strptime(user_data["start_date"], "%d.%m.%Y")
         end = datetime.strptime(user_data["end_date"], "%d.%m.%Y")
         days_left = (end - datetime.today()).days
-    except Exception as e:
-        await message.reply(f"Ошибка в датах: {e}")
-        await state.finish()
+        int(payment)  # Проверка, что сумма — число
+    except ValueError:
+        await message.reply("Ошибка в данных. Убедитесь, что даты и сумма оплаты введены корректно.")
         return
 
     new_row = [
@@ -223,12 +232,12 @@ async def process_payment(message: types.Message, state: FSMContext):
     ]
 
     try:
-        sheet.append_row(new_row)
-        await message.reply("✅ Ученик добавлен!")
+        await append_row_async(new_row)
+        await message.reply("✅ Ученик добавлен!", reply_markup=main_menu_kb)
     except Exception as e:
         await message.reply(f"Ошибка при добавлении в таблицу: {e}")
 
     await state.finish()
+
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
-
